@@ -59,14 +59,20 @@ def run_config(backend, transpiled, H_padded, n_params, name):
         ak = spsa.a / (k + spsa.A) ** spsa.alpha
         delta = np.random.choice([-1, 1], size=n_params).astype(float)
 
+        # Batch both SPSA evaluations into a single EstimatorV2 call (2 PUBs)
+        # This halves network round-trips vs 2 separate submissions
+        p_plus = spsa.params + ck * delta
+        p_minus = spsa.params - ck * delta
         est = EstimatorV2(mode=backend)
-        j_plus = est.run([(transpiled, H_padded, spsa.params + ck * delta)])
-        est2 = EstimatorV2(mode=backend)
-        j_minus = est2.run([(transpiled, H_padded, spsa.params - ck * delta)])
-        total_jobs += 2
+        job = est.run([
+            (transpiled, H_padded, p_plus),
+            (transpiled, H_padded, p_minus),
+        ])
+        result = job.result()
+        total_jobs += 1  # 1 batched job instead of 2
 
-        e_plus = float(j_plus.result()[0].data.evs)
-        e_minus = float(j_minus.result()[0].data.evs)
+        e_plus = float(result[0].data.evs)
+        e_minus = float(result[1].data.evs)
 
         g_hat = (e_plus - e_minus) / (2.0 * ck * delta)
         spsa.params -= ak * g_hat
